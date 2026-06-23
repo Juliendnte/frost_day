@@ -75,7 +75,7 @@ class FrostResult:
 # Lecture d'un fichier météo département
 # ---------------------------------------------------------------------------
 
-def _find_meteo_file(dept: str) -> Optional[str]:
+def find_meteo_file(dept: str) -> Optional[str]:
     """Retourne le chemin du fichier météo pour un département donné, ou None."""
     # Format : Q_{DEPT}_previous-..._RR-T-Vent.csv.gz
     pattern = os.path.join(config.METEO_RAW_DIR, f"Q_{dept}_*RR-T-Vent*.csv.gz")
@@ -226,6 +226,7 @@ def compute_frost_days(
     n_candidates: int = config.NUM_NEAREST_STATIONS,
     max_missing_pct: float = config.MAX_MISSING_PERCENT,
     verbose: bool = True,
+    on_missing_dept: Optional[callable] = None,
 ) -> FrostResult:
     """
     Calcule les statistiques de jours de gel pour une commune et une période.
@@ -244,6 +245,13 @@ def compute_frost_days(
         Seuil d'exclusion (%) de valeurs manquantes.
     verbose : bool
         Affiche les informations de progression.
+    on_missing_dept : callable(dept_code: str) -> bool, optional
+        Callback appelé quand un fichier météo de département est absent
+        localement. Reçoit le code département (str) et doit retourner True si
+        le téléchargement a réussi, False sinon.
+        Après un téléchargement réussi, le cache des stations est reconstruit
+        automatiquement et les candidats sont recalculés depuis la nouvelle
+        position dans la boucle.
 
     Returns
     -------
@@ -269,8 +277,14 @@ def compute_frost_days(
             f"(dept {commune_dept})  lat={lat:.4f} lon={lon:.4f}"
         )
 
+    # Départements déjà tentés pour le téléchargement (évite les boucles infinies)
+    _download_attempted: set[str] = set()
+
+    def _get_candidates() -> pd.DataFrame:
+        return gm.get_candidate_stations(lat, lon, n=n_candidates)
+
     # 2. Stations candidates (tous départements)
-    candidates = gm.get_candidate_stations(lat, lon, n=n_candidates)
+    candidates = _get_candidates()
 
     if verbose:
         print(
@@ -284,25 +298,62 @@ def compute_frost_days(
             )
 
     # 3. Boucle sur les candidats jusqu'à trouver une station valide
-    for _, cand in candidates.iterrows():
+    #    On itère sur un index pour pouvoir reconstruire candidates en cours de route.
+    idx = 0
+    while idx < len(candidates):
+        cand = candidates.iloc[idx]
         num_poste = str(cand["NUM_POSTE"])
         dept_station = str(cand["dept"])
         tn_scale = float(cand["tn_scale"])
         dist_km = float(cand["dist_km"])
         station_name = str(cand["NOM_USUEL"])
 
-        filepath = _find_meteo_file(dept_station)
+        filepath = find_meteo_file(dept_station)
         if filepath is None:
-            if verbose:
-                print(
-                    f"   [skip] {station_name} : fichier dept {dept_station} absent localement."
-                )
+            # Fichier absent : tenter le téléchargement via le callback
+            if (
+                on_missing_dept is not None
+                and dept_station not in _download_attempted
+            ):
+                _download_attempted.add(dept_station)
+                if verbose:
+                    print(
+                        f"   [dl]   {station_name} : déclenchement du téléchargement "
+                        f"dept {dept_station}…"
+                    )
+                success = on_missing_dept([dept_station])
+                if success:
+                    # Reconstruire le cache stations pour inclure le nouveau dept
+                    gm._load_stations_cached.cache_clear()
+                    gm.build_stations_cache(force=True)
+                    # Recalculer les candidats (le nouveau dept peut apporter de meilleures stations)
+                    candidates = _get_candidates()
+                    if verbose:
+                        print(
+                            f"   [dl]   Cache stations reconstruit — "
+                            f"{len(candidates)} candidat(s) disponibles."
+                        )
+                    # Ne pas incrémenter idx : retenter la même position avec les nouveaux candidats
+                    continue
+                else:
+                    if verbose:
+                        print(
+                            f"   [skip] {station_name} : téléchargement dept "
+                            f"{dept_station} échoué."
+                        )
+            else:
+                if verbose:
+                    print(
+                        f"   [skip] {station_name} : fichier dept {dept_station} absent localement."
+                    )
+            idx += 1
             continue
 
         df_station = _load_station_data(filepath, num_poste, start, end, tn_scale)
         if df_station is None or df_station.empty:
             if verbose:
                 print(f"   [skip] {station_name} : aucune donnée sur la période.")
+            idx += 1
             continue
 
         miss_rate = _missing_rate(df_station, start, end)
@@ -312,6 +363,7 @@ def compute_frost_days(
                     f"   [skip] {station_name} : {miss_rate:.1f}% manquants "
                     f"(> {max_missing_pct}%)."
                 )
+            idx += 1
             continue
 
         # Station valide !
