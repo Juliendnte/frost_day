@@ -12,20 +12,26 @@ Les fichiers météo sont volumineux (plusieurs centaines de Mo à quelques Go p
 toute la France) : par défaut, ce script ne télécharge QUE les départements demandés
 en argument, et met en cache localement ce qui a déjà été récupéré.
 
+Seule la tranche de période "1950 -> année-2" (ex: fichier
+Q_{DEP}_previous-1950-2024_RR-T-Vent.csv.gz) est téléchargée : c'est la seule à
+couvrir la période d'intérêt du défi (2014-2023). Les tranches "avant 1950"
+(historique très ancien) et "latest-20XX-20YY" (deux dernières années glissantes)
+sont volontairement exclues.
+
 Usage
 -----
-    # Télécharger les communes + la météo pour les départements 13 et 75
+    # Télécharger les communes + la météo (tranche 1950-20XX) pour les départements 13 et 75
     python src/download_data.py --depts 13 75
 
-    # Télécharger pour toute la France métropolitaine (très volumineux, ~plusieurs Go)
+    # Télécharger pour toute la France métropolitaine (volumineux, ~plusieurs Go)
     python src/download_data.py --depts all
 
     # Ne télécharger que le référentiel des communes
     python src/download_data.py --communes-only
 
 Le script interroge l'API data.gouv.fr à chaque exécution pour obtenir les URLs de
-téléchargement à jour (elles changent au fil des mises à jour des jeux de données,
-par ex. "latest-2023-2024" devient "latest-2025-2026" l'année suivante).
+téléchargement à jour (le nom de la tranche "1950-20XX" change chaque année, par ex.
+"1950-2024" deviendra "1950-2025").
 """
 
 import argparse
@@ -46,7 +52,10 @@ except ImportError:  # fallback si tqdm n'est pas installé
 
 
 HEADERS = {"User-Agent": "frost-days-defi/1.0 (+https://www.data.gouv.fr)"}
-TIMEOUT = 60
+CONNECT_TIMEOUT = 15   # secondes pour établir la connexion
+READ_TIMEOUT = 300     # secondes entre deux paquets reçus (fichiers volumineux + serveur parfois lent)
+REQUEST_TIMEOUT = (CONNECT_TIMEOUT, READ_TIMEOUT)
+MAX_DOWNLOAD_RETRIES = 5
 
 
 # --------------------------------------------------------------------------
@@ -58,7 +67,7 @@ def _get_json_with_retry(url: str, max_retries: int = 3, backoff: float = 2.0) -
     last_exc = None
     for attempt in range(1, max_retries + 1):
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as exc:
@@ -69,7 +78,18 @@ def _get_json_with_retry(url: str, max_retries: int = 3, backoff: float = 2.0) -
 
 
 def _download_file(url: str, dest_path: str, force: bool = False) -> str:
-    """Télécharge un fichier avec barre de progression, sauf s'il existe déjà."""
+    """
+    Télécharge un fichier avec barre de progression, sauf s'il existe déjà.
+
+    Gère :
+    - la reprise (resume) d'un téléchargement partiel via l'en-tête HTTP Range,
+      ce qui évite de tout recommencer si la connexion a été coupée ;
+    - plusieurs tentatives en cas d'erreur réseau (timeout, connexion réinitialisée...),
+      avec un backoff progressif ;
+    - un timeout de lecture généreux (les fichiers météo "previous-*" peuvent peser
+      plusieurs centaines de Mo et le serveur de data.gouv.fr est parfois lent à
+      répondre entre deux paquets).
+    """
     if os.path.exists(dest_path) and not force:
         size = os.path.getsize(dest_path)
         if size > 0:
@@ -77,19 +97,59 @@ def _download_file(url: str, dest_path: str, force: bool = False) -> str:
             return dest_path
 
     tmp_path = dest_path + ".part"
-    with requests.get(url, headers=HEADERS, stream=True, timeout=TIMEOUT) as resp:
-        resp.raise_for_status()
-        total = int(resp.headers.get("content-length", 0))
-        with open(tmp_path, "wb") as f, tqdm(
-            total=total, unit="B", unit_scale=True,
-            desc=os.path.basename(dest_path), leave=False,
-        ) as pbar:
-            for chunk in resp.iter_content(chunk_size=1024 * 256):
-                if chunk:
-                    f.write(chunk)
-                    pbar.update(len(chunk))
-    os.replace(tmp_path, dest_path)
-    return dest_path
+    if force and os.path.exists(tmp_path):
+        os.remove(tmp_path)
+
+    last_exc = None
+    for attempt in range(1, MAX_DOWNLOAD_RETRIES + 1):
+        resume_from = os.path.getsize(tmp_path) if os.path.exists(tmp_path) else 0
+        headers = dict(HEADERS)
+        mode = "wb"
+        if resume_from > 0:
+            headers["Range"] = f"bytes={resume_from}-"
+            mode = "ab"
+
+        try:
+            with requests.get(
+                url, headers=headers, stream=True, timeout=REQUEST_TIMEOUT
+            ) as resp:
+                # 416 = on a déjà tout le fichier (la reprise demandait plus que la taille réelle)
+                if resp.status_code == 416:
+                    break
+                if resp.status_code not in (200, 206):
+                    resp.raise_for_status()
+
+                # Si le serveur ignore le Range et renvoie tout le fichier (200 au lieu de 206),
+                # on doit repartir de zéro pour ne pas dupliquer le contenu déjà écrit.
+                if resume_from > 0 and resp.status_code == 200:
+                    resume_from = 0
+                    mode = "wb"
+
+                total = int(resp.headers.get("content-length", 0)) + resume_from
+                with open(tmp_path, mode) as f, tqdm(
+                    total=total or None, initial=resume_from, unit="B", unit_scale=True,
+                    desc=os.path.basename(dest_path), leave=False,
+                ) as pbar:
+                    for chunk in resp.iter_content(chunk_size=1024 * 256):
+                        if chunk:
+                            f.write(chunk)
+                            pbar.update(len(chunk))
+
+            os.replace(tmp_path, dest_path)
+            return dest_path
+
+        except requests.RequestException as exc:
+            last_exc = exc
+            wait = min(60, 5 * attempt)
+            print(
+                f"  [!] Tentative {attempt}/{MAX_DOWNLOAD_RETRIES} échouée pour "
+                f"{os.path.basename(dest_path)} ({exc}). Reprise dans {wait}s..."
+            )
+            time.sleep(wait)
+
+    raise RuntimeError(
+        f"Échec du téléchargement de {url} après {MAX_DOWNLOAD_RETRIES} tentatives"
+    ) from last_exc
 
 
 # --------------------------------------------------------------------------
@@ -124,13 +184,18 @@ def list_meteo_resources() -> list[dict]:
 
 def filter_resources_for_depts(resources: list[dict], depts: list[str]) -> dict:
     """
-    Filtre les ressources RR-T-Vent pour les départements demandés.
+    Filtre les ressources RR-T-Vent pour les départements demandés, en ne gardant
+    que la tranche de période "1950 -> année-2" (fichier nommé
+    Q_{DEP}_previous-1950-20XX_RR-T-Vent.csv.gz côté URL, et dont le titre contient
+    "1950-20XX"). C'est la seule tranche couvrant 2014-2023 ; on exclut donc
+    volontairement :
+      - la tranche historique avant 1950 (ex: "avant-1949"), trop ancienne ;
+      - la tranche "latest-20XX-20YY" des deux dernières années, hors de notre période.
 
-    Renvoie un dict {dept: [urls...]} (un département peut avoir plusieurs fichiers,
-    un par tranche de période : avant-1950, 1950-2024, 2025-2026 (la tranche la plus
-    récente est glissante et son nom change au fil des mises à jour), etc.)
+    Renvoie un dict {dept: [urls...]}. Avec ce filtre, chaque département a au plus
+    un seul fichier.
 
-    Le département est extrait du *titre* de la ressource (format
+    Le département et la période sont extraits du *titre* de la ressource (format
     "QUOT_departement_{DEP}_periode_{PERIODE}_RR-T-Vent"), plus fiable que de parser
     l'URL.
     """
@@ -144,13 +209,21 @@ def filter_resources_for_depts(resources: list[dict], depts: list[str]) -> dict:
             continue
         if "RR-T-Vent" not in title:
             continue
-        if "departement_" not in title:
+        if "departement_" not in title or "_periode_" not in title:
             continue
 
         # title ex: "QUOT_departement_13_periode_1950-2024_RR-T-Vent"
         try:
-            dep_code = title.split("departement_", 1)[1].split("_periode_", 1)[0]
-        except IndexError:
+            after_dep = title.split("departement_", 1)[1]
+            dep_code, rest = after_dep.split("_periode_", 1)
+            periode = rest.split("_RR-T-Vent", 1)[0]  # ex: "1950-2024"
+        except (IndexError, ValueError):
+            continue
+
+        # On ne garde que la tranche qui commence en 1950 (la seule à couvrir 2014-2023).
+        # On exclut donc "avant-1949"/"1852-1949"/etc. (trop ancienne) et la tranche
+        # glissante des deux dernières années (ex: "2025-2026"), qui ne commence pas en 1950.
+        if not periode.startswith("1950-"):
             continue
 
         if dep_code in depts_set:
@@ -160,11 +233,20 @@ def filter_resources_for_depts(resources: list[dict], depts: list[str]) -> dict:
 
 
 def download_meteo_for_depts(depts: list[str], force: bool = False) -> list[str]:
-    """Télécharge les fichiers météo RR-T-Vent pour la liste de départements donnée."""
+    """
+    Télécharge les fichiers météo RR-T-Vent pour la liste de départements donnée.
+
+    Un échec de téléchargement sur un fichier (après épuisement des tentatives de
+    reprise) n'interrompt pas le reste : il est consigné et le script continue avec
+    les fichiers/départements suivants. Un récapitulatif des échecs est affiché à
+    la fin pour permettre de relancer uniquement ce qui manque (le script reprend
+    automatiquement les fichiers partiels grâce au cache + Range HTTP).
+    """
     resources = list_meteo_resources()
     matches = filter_resources_for_depts(resources, depts)
 
     downloaded_paths = []
+    failed = []
     not_found = []
     for dep in depts:
         urls = matches.get(dep, [])
@@ -175,12 +257,23 @@ def download_meteo_for_depts(depts: list[str], force: bool = False) -> list[str]
             filename = url.rsplit("/", 1)[-1]
             dest_path = os.path.join(config.METEO_RAW_DIR, filename)
             print(f"Téléchargement département {dep} : {filename}")
-            _download_file(url, dest_path, force=force)
-            downloaded_paths.append(dest_path)
+            try:
+                _download_file(url, dest_path, force=force)
+                downloaded_paths.append(dest_path)
+            except RuntimeError as exc:
+                print(f"  [ÉCHEC] {filename} : {exc}")
+                failed.append((dep, filename, url))
 
     if not_found:
         print(f"\n[!] Aucun fichier RR-T-Vent trouvé pour les départements : {not_found}")
         print("    Vérifiez le code département (ex: '2A'/'2B' pour la Corse, '971'-'988' pour les DOM).")
+
+    if failed:
+        print(f"\n[!] {len(failed)} fichier(s) n'ont pas pu être téléchargés après plusieurs tentatives :")
+        for dep, filename, url in failed:
+            print(f"    - dept {dep} : {filename}")
+        print("    Relancez simplement la même commande : les fichiers déjà complets sont")
+        print("    ignorés et les téléchargements interrompus reprennent où ils s'étaient arrêtés.")
 
     return downloaded_paths
 
