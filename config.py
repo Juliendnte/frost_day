@@ -69,6 +69,16 @@ MISSING_CITIES_LAT_LON = {
 # Paramètres métier
 # --------------------------------------------------------------------------
 MAX_MISSING_PERCENT = 35.0   # % de valeurs manquantes max pour garder une station
-FROST_THRESHOLD_C = 0.0      # Seuil de gel : TN <= 0°C
+
+# Seuil de gel : TN <= 0 °C
+# IMPORTANT – unité de TN dans les CSV Météo-France :
+#   La documentation officielle indique "1/10 de degré", mais les exports
+#   CSV publics de data.gouv.fr exposent la valeur DÉJÀ en °C décimaux
+#   (ex : -1.5 et non -15). geo_matching.detect_tn_scale() vérifie
+#   empiriquement l'unité à l'ouverture du fichier et applique le facteur
+#   0.1 si nécessaire. Le seuil ci-dessous est TOUJOURS en °C ; c'est TN
+#   qui est normalisée avant la comparaison, jamais ce seuil.
+FROST_THRESHOLD_C = 0.0
+
 NUM_NEAREST_STATIONS = 5     # Nombre de stations candidates les plus proches à examiner
 EARTH_RADIUS_KM = 6371.0
