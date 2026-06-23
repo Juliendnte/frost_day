@@ -221,7 +221,7 @@ def build_communes_cache(force: bool = False) -> pd.DataFrame:
     communes = _load_communes_raw()
 
     # Détection automatique des colonnes de coordonnées
-    cols = communes.columns.str.lower()
+    communes.columns.str.lower()
     lat_col = next(
         (c for c in communes.columns if "latitude_centre" in c.lower()), None
     ) or next(
