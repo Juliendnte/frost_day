@@ -115,11 +115,9 @@ def _load_station_data(
     except Exception as exc:
         print(f"[frost_calculator] Erreur lecture {filepath} : {exc}")
         return None
-
     df = df[df["NUM_POSTE"] == num_poste].copy()
     if df.empty:
         return None
-
     df["date"] = pd.to_datetime(df["AAAAMMJJ"].astype(str), format="%Y%m%d", errors="coerce")
     df = df.dropna(subset=["date"])
     df = df[(df["date"] >= start) & (df["date"] <= end)].copy()

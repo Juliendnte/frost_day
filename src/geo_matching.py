@@ -143,7 +143,6 @@ def build_stations_cache(force: bool = False) -> pd.DataFrame:
                 compression="gzip",
                 usecols=["NUM_POSTE", "NOM_USUEL", "LAT", "LON"],
                 dtype={"NUM_POSTE": str},
-                nrows=50_000,          # suffisant pour avoir toutes les stations
             )
         except Exception:
             continue
@@ -332,7 +331,6 @@ def get_candidate_stations(
     lons = stations["LON"].values.astype(float)
 
     dists = haversine_km_vec(lat, lon, lats, lons)
-
     idx_sorted = np.argsort(dists)[:n]
     candidates = stations.iloc[idx_sorted].copy()
     candidates["dist_km"] = dists[idx_sorted]
