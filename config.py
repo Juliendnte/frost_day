@@ -13,6 +13,7 @@ RAW_DIR = os.path.join(DATA_DIR, "raw")
 METEO_RAW_DIR = os.path.join(RAW_DIR, "meteo")
 COMMUNES_RAW_DIR = os.path.join(RAW_DIR, "communes")
 PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
+VALIDATION_DIR = os.path.join(DATA_DIR, "validation")
 
 for d in (DATA_DIR, RAW_DIR, METEO_RAW_DIR, COMMUNES_RAW_DIR, PROCESSED_DIR):
     os.makedirs(d, exist_ok=True)
