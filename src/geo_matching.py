@@ -143,7 +143,6 @@ def build_stations_cache(force: bool = False) -> pd.DataFrame:
                 compression="gzip",
                 usecols=["NUM_POSTE", "NOM_USUEL", "LAT", "LON"],
                 dtype={"NUM_POSTE": str},
-                nrows=50_000,          # suffisant pour avoir toutes les stations
             )
         except Exception:
             continue

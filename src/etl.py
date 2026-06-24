@@ -1,4 +1,11 @@
+import glob
+import os
+import sys
+import numpy as np
 import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import geo_matching as gm
 import config
 
@@ -40,6 +47,35 @@ def missing_rate_per_station(df: pd.DataFrame, seuil: float = 35.0) -> pd.DataFr
             rows.append(num_poste)
     return df[df["NUM_POSTE"].isin(rows)]
 
+def build_valid_station_ids(seuil: float = config.MAX_MISSING_PERCENT) -> set:
+    """
+    Lit tous les fichiers météo, filtre sur 2014-2023,
+    et retourne l'ensemble des NUM_POSTE passant le critère de qualité.
+    """
+    pattern = os.path.join(config.METEO_RAW_DIR, "*RR-T-Vent*.csv.gz")
+    meteo_files = sorted(glob.glob(pattern))
+
+    valid_ids = set()
+    for filepath in meteo_files:
+        try:
+            df = pd.read_csv(
+                filepath, sep=";", compression="gzip",
+                usecols=["NUM_POSTE", "AAAAMMJJ", "TN"],
+                dtype={"NUM_POSTE": str},
+            )
+            df = date_min_max(df)
+            if df.empty:
+                continue
+            df["AAAAMMJJ"] = pd.to_datetime(
+                df["AAAAMMJJ"].astype(str), format="%Y%m%d", errors="coerce"
+            )
+            df = df.dropna(subset=["AAAAMMJJ"])
+            valid_df = missing_rate_per_station(df, seuil)
+            valid_ids.update(valid_df["NUM_POSTE"].unique())
+        except Exception:
+            continue
+    return valid_ids
+
 def clean_communes(df: pd.DataFrame) -> None:
     """
     Sélectionne, renomme les colonnes et associe la station la plus proche à chaque commune.
@@ -66,9 +102,17 @@ def clean_communes(df: pd.DataFrame) -> None:
     })
     df = df.sort_values("insee_code").reset_index(drop=True)
 
+    valid_ids = build_valid_station_ids()
+    stations = gm.build_stations_cache(force=True)
+    stations = stations[stations["NUM_POSTE"].isin(valid_ids)].reset_index(drop=True)
+    lats_s = stations["LAT"].values.astype(float)
+    lons_s = stations["LON"].values.astype(float)
+
     closest_names, closest_nums, closest_depts = [], [], []
     for _, row in df.iterrows():
-        station = gm.get_candidate_stations(row["lat"], row["lon"], n=1).iloc[0]
+        dists = gm.haversine_km_vec(row["lat"], row["lon"], lats_s, lons_s)
+        idx = int(np.argmin(dists))
+        station = stations.iloc[idx]
         closest_names.append(station["NOM_USUEL"])
         closest_nums.append(station["NUM_POSTE"])
         closest_depts.append(station["dept"])
@@ -77,7 +121,15 @@ def clean_communes(df: pd.DataFrame) -> None:
     df["closest_station_num_poste"] = closest_nums
     df["station_dept"] = closest_depts
 
-    save_dataset(df, "../data/processed/city_df.csv")
+    save_dataset(df, os.path.join(config.PROCESSED_DIR, "city_df.csv"))
+
+def load_communes() -> None:
+    """
+    Charge le fichier communes-france-2025.csv.gz et appelle clean_communes.
+    """
+    path = os.path.join(config.COMMUNES_RAW_DIR, "communes-france-2025.csv.gz")
+    df = pd.read_csv(path, dtype={"code_insee": str}, low_memory=False)
+    clean_communes(df)
 
 def save_dataset(df: pd.DataFrame, path: str) -> None:
     """
@@ -88,3 +140,6 @@ def save_dataset(df: pd.DataFrame, path: str) -> None:
     :return: None
     """
     df.to_csv(path, index=False)
+
+if __name__ == "__main__":
+    load_communes()
