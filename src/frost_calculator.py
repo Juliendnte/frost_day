@@ -325,6 +325,7 @@ def compute_frost_days(
                 if success:
                     # Reconstruire le cache stations pour inclure le nouveau dept
                     gm._load_stations_cached.cache_clear()
+                    gm._load_communes_cached.cache_clear()
                     gm.build_stations_cache(force=True)
                     # Recalculer les candidats (le nouveau dept peut apporter de meilleures stations)
                     candidates = _get_candidates()
