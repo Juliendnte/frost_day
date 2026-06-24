@@ -319,8 +319,14 @@ if needs_communes or needs_meteo:
 
 # ── Calcul ───────────────────────────────────────────────────────────────────
 
-meteo_file = fc.find_meteo_file(gm.find_commune(commune_input.strip(), dept_norm))
+try:
+    meteo_file = fc.find_meteo_file(gm.find_commune(commune_input.strip(), dept_norm))
+except ValueError as exc:
+    st.error(f"❌ Commune introuvable : {exc}")
+    st.stop()
+
 on_missing_dept = None if meteo_file else dl.download_meteo_for_depts
+
 with st.spinner("Calcul des jours de gel en cours…"):
     try:
         result = fc.compute_frost_days(
