@@ -140,6 +140,13 @@ def dept_meteo_file_exists(dept: str) -> bool:
     pattern = os.path.join(config.METEO_RAW_DIR, f"Q_{dept}_*RR-T-Vent*.csv.gz")
     return bool(glob.glob(pattern))
 
+def _invalidate_geo_caches():
+    """
+    Invalide les caches Python des stations et communes.
+    BUGFIX : À appeler après tout téléchargement ou modification des données.
+    """
+    gm._load_stations_cached.cache_clear()
+    gm._load_communes_cached.cache_clear()
 
 def communes_file_exists() -> bool:
     pattern = os.path.join(config.COMMUNES_RAW_DIR, "*.csv.gz")
@@ -315,6 +322,7 @@ if needs_communes or needs_meteo:
         unsafe_allow_html=True,
     )
     # Invalider le cache communes si on vient de les télécharger
+    _invalidate_geo_caches()
     get_communes_list.clear()
 
 # ── Calcul ───────────────────────────────────────────────────────────────────
