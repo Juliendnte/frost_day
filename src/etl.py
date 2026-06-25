@@ -4,6 +4,8 @@ import sys
 import unicodedata
 import numpy as np
 import pandas as pd
+import concurrent.futures
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -48,11 +50,16 @@ def missing_rate_per_station(df: pd.DataFrame, seuil: float = config.MAX_MISSING
             rows.append(num_poste)
     return df[df["NUM_POSTE"].isin(rows)]
 
+_valid_station_ids_cache: dict[float, set] = {}
+
 def build_valid_station_ids(seuil: float = config.MAX_MISSING_PERCENT) -> set:
     """
     Lit tous les fichiers météo, filtre sur 2014-2023,
     et retourne l'ensemble des NUM_POSTE passant le critère de qualité.
     """
+    if seuil in _valid_station_ids_cache:
+        return _valid_station_ids_cache[seuil]
+
     pattern = os.path.join(config.METEO_RAW_DIR, "*RR-T-Vent*.csv.gz")
     meteo_files = sorted(glob.glob(pattern))
 
@@ -75,11 +82,13 @@ def build_valid_station_ids(seuil: float = config.MAX_MISSING_PERCENT) -> set:
             valid_ids.update(valid_df["NUM_POSTE"].unique())
         except Exception:
             continue
+    _valid_station_ids_cache[seuil] = valid_ids
     return valid_ids
 
-def clean_communes(df: pd.DataFrame) -> None:
+def clean_communes(df: pd.DataFrame, cache=True) -> None:
     """
     Sélectionne, renomme les colonnes et associe la station la plus proche à chaque commune.
+    :param cache:
     :param df: DataFrame brut des communes
     :return: df avec colonnes insee_code, name, dep_code, dep_name, lat, lon,
              closest_station_name, closest_station_num_poste, station_dept
@@ -104,7 +113,7 @@ def clean_communes(df: pd.DataFrame) -> None:
     df = df.sort_values("insee_code").reset_index(drop=True)
 
     valid_ids = build_valid_station_ids()
-    stations = gm.build_stations_cache(force=True)
+    stations = gm.build_stations_cache(force=cache)
     stations = stations[stations["NUM_POSTE"].isin(valid_ids)].reset_index(drop=True)
     lats_s = stations["LAT"].values.astype(float)
     lons_s = stations["LON"].values.astype(float)
@@ -211,7 +220,7 @@ def process_city_weather(city_name: str, dept: str, output_dir: str = config.VAL
         "date", "tmin", "frost_day", "year", "month", "day"]]
 
     city_safe = city_name.replace(" ", "_")
-    filename = f"{city_safe}_{dept}_completed.csv"
+    filename = f"{city_safe}_{dept}_complete.csv"
     save_dataset(out, os.path.join(config.VALIDATION_DIR, filename))
     print(f"[etl] {city_name} ({dept}) → {filename} ({len(out)} lignes)")
 
@@ -239,5 +248,16 @@ if __name__ == "__main__":
         ("Paris", "75"),
     ]
 
-    for city, dept in cities:
-        process_city_weather(city, dept)
+    print("[etl] --- Séquentiel ---")
+    start_time = time.time()
+    for city, dep in cities:
+        process_city_weather(city, dep)
+    print(f"[etl] Temps séquentiel : {time.time() - start_time:.2f}s")
+
+    print("[etl] --- Multithread ---")
+    start_time = time.time()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(process_city_weather, city, dept) for city, dept in cities]
+        for f in concurrent.futures.as_completed(futures):
+            f.result()
+    print(f"[etl] Temps multithread : {time.time() - start_time:.2f}s")
