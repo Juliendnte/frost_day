@@ -28,7 +28,7 @@ def date_min_max(df: pd.DataFrame) -> pd.DataFrame:
     df = df[(df["AAAAMMJJ"] >= "20140101") & (df["AAAAMMJJ"] <= "20231231")]
     return df
 
-def missing_rate_per_station(df: pd.DataFrame, seuil: float = 35.0) -> pd.DataFrame:
+def missing_rate_per_station(df: pd.DataFrame, seuil: float = config.MAX_MISSING_PERCENT) -> pd.DataFrame:
     """
     Supprime les stations ayant un taux de valeurs manquantes supérieur au seuil.
     :param df: DataFrame avec colonnes NUM_POSTE, AAAAMMJJ, TN
@@ -122,7 +122,7 @@ def clean_communes(df: pd.DataFrame) -> None:
     df["closest_station_num_poste"] = closest_nums
     df["station_dept"] = closest_depts
 
-    save_dataset(df, os.path.join(config.VALIDATION_DIR, "city_df.csv"))
+    save_dataset(df, os.path.join(config.VALIDATION_DIR, "city_df_complete.csv"))
 
 def load_communes() -> None:
     """
@@ -152,7 +152,7 @@ def process_city_weather(city_name: str, dept: str, output_dir: str = config.VAL
     :param output_dir: dossier de sortie
     """
     city_df = pd.read_csv(
-        os.path.join(config.VALIDATION_DIR, "city_df.csv"),
+        os.path.join(config.VALIDATION_DIR, "city_df_complete.csv"),
         dtype={"insee_code": str, "dep_code": str, "closest_station_num_poste": str},
     )
 
@@ -169,7 +169,7 @@ def process_city_weather(city_name: str, dept: str, output_dir: str = config.VAL
         & (city_df["dep_code"] == dept_norm)
     )
     if not mask.any():
-        raise ValueError(f"Commune '{city_name}' (dept {dept}) introuvable dans city_df.csv")
+        raise ValueError(f"Commune '{city_name}' (dept {dept}) introuvable dans city_df_complete.csv")
 
     row = city_df[mask].iloc[0]
     num_poste = str(row["closest_station_num_poste"])
@@ -211,21 +211,33 @@ def process_city_weather(city_name: str, dept: str, output_dir: str = config.VAL
         "date", "tmin", "frost_day", "year", "month", "day"]]
 
     city_safe = city_name.replace(" ", "_")
-    filename = f"{city_safe}_{dept}_weather_data.csv"
+    filename = f"{city_safe}_{dept}_completed.csv"
     save_dataset(out, os.path.join(config.VALIDATION_DIR, filename))
     print(f"[etl] {city_name} ({dept}) → {filename} ({len(out)} lignes)")
 
+def load_stations() -> pd.DataFrame:
+    stations = gm.get_all_station()
+    return clean_stations(stations)
+
+def clean_stations(df: pd.DataFrame) -> pd.DataFrame:
+    valid_ids = build_valid_station_ids()
+    df = df[df["NUM_POSTE"].isin(valid_ids)].reset_index(drop=True)
+    df = df.rename(columns={"NUM_POSTE": "station_id", "NOM_USUEL": "station_name"})
+    save_dataset(df, os.path.join(config.VALIDATION_DIR, "stations_df_complete.csv"))
+    return df
+
 if __name__ == "__main__":
-    load_communes()
-
-    cities = [
-        ("Asnières-sur-Saône", "01"),
-        ("Digne-les-Bains", "04"),
-        ("Espinchal", "63"),
-        ("Marseille", "13"),
-        ("Montfalcon", "38"),
-        ("Paris", "75"),
-    ]
-
-    for city, dept in cities:
-        process_city_weather(city, dept)
+    load_stations()
+    # load_communes()
+    #
+    # cities = [
+    #     ("Asnières-sur-Saône", "01"),
+    #     ("Digne-les-Bains", "04"),
+    #     ("Espinchal", "63"),
+    #     ("Marseille", "13"),
+    #     ("Montfalcon", "38"),
+    #     ("Paris", "75"),
+    # ]
+    #
+    # for city, dept in cities:
+    #     process_city_weather(city, dept)
