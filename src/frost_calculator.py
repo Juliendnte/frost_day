@@ -160,8 +160,6 @@ def _missing_rate(df_station: pd.DataFrame) -> float:
 
 def _compute_frost_stats(
     df_station: pd.DataFrame,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
 ) -> tuple[int, float, pd.DataFrame]:
     """
     À partir d'un DataFrame [date, tn_celsius] (déjà filtré sur la période),
@@ -373,7 +371,7 @@ def compute_frost_days(
                 f"tn_scale={tn_scale}"
             )
 
-        total, avg, daily = _compute_frost_stats(df_station, start, end)
+        total, avg, daily = _compute_frost_stats(df_station)
 
         return FrostResult(
             commune_name=str(commune_row["nom_standard"]),
