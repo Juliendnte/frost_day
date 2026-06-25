@@ -14,8 +14,9 @@ METEO_RAW_DIR = os.path.join(RAW_DIR, "meteo")
 COMMUNES_RAW_DIR = os.path.join(RAW_DIR, "communes")
 PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
 VALIDATION_DIR = os.path.join(DATA_DIR, "validation")
+VALIDATION_PROF_DIR = os.path.join(DATA_DIR, "validation_prof")
 
-for d in (DATA_DIR, RAW_DIR, METEO_RAW_DIR, COMMUNES_RAW_DIR, PROCESSED_DIR):
+for d in (DATA_DIR, RAW_DIR, METEO_RAW_DIR, COMMUNES_RAW_DIR, PROCESSED_DIR, VALIDATION_DIR):
     os.makedirs(d, exist_ok=True)
 
 STATIONS_CACHE_PATH = os.path.join(PROCESSED_DIR, "stations.parquet")

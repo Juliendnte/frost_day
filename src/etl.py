@@ -122,7 +122,7 @@ def clean_communes(df: pd.DataFrame) -> None:
     df["closest_station_num_poste"] = closest_nums
     df["station_dept"] = closest_depts
 
-    save_dataset(df, os.path.join(config.PROCESSED_DIR, "city_df.csv"))
+    save_dataset(df, os.path.join(config.VALIDATION_DIR, "city_df.csv"))
 
 def load_communes() -> None:
     """
@@ -142,7 +142,7 @@ def save_dataset(df: pd.DataFrame, path: str) -> None:
     """
     df.to_csv(path, index=False)
 
-def process_city_weather(city_name: str, dept: str, output_dir: str = config.PROCESSED_DIR) -> None:
+def process_city_weather(city_name: str, dept: str, output_dir: str = config.VALIDATION_DIR) -> None:
     """
     Pour une commune donnée, extrait les données météo de sa station la plus proche valide
     et sauvegarde un CSV au format :
@@ -152,7 +152,7 @@ def process_city_weather(city_name: str, dept: str, output_dir: str = config.PRO
     :param output_dir: dossier de sortie
     """
     city_df = pd.read_csv(
-        os.path.join(config.PROCESSED_DIR, "city_df.csv"),
+        os.path.join(config.VALIDATION_DIR, "city_df.csv"),
         dtype={"insee_code": str, "dep_code": str, "closest_station_num_poste": str},
     )
 
@@ -211,8 +211,8 @@ def process_city_weather(city_name: str, dept: str, output_dir: str = config.PRO
         "date", "tmin", "frost_day", "year", "month", "day"]]
 
     city_safe = city_name.replace(" ", "_")
-    filename = f"{city_safe}_{dept}_data.csv"
-    save_dataset(out, os.path.join(config.PROCESSED_DIR, filename))
+    filename = f"{city_safe}_{dept}_weather_data.csv"
+    save_dataset(out, os.path.join(config.VALIDATION_DIR, filename))
     print(f"[etl] {city_name} ({dept}) → {filename} ({len(out)} lignes)")
 
 if __name__ == "__main__":
@@ -226,5 +226,6 @@ if __name__ == "__main__":
         ("Montfalcon", "38"),
         ("Paris", "75"),
     ]
+
     for city, dept in cities:
         process_city_weather(city, dept)
