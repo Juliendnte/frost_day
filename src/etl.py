@@ -228,16 +228,16 @@ def clean_stations(df: pd.DataFrame) -> pd.DataFrame:
 
 if __name__ == "__main__":
     load_stations()
-    # load_communes()
-    #
-    # cities = [
-    #     ("Asnières-sur-Saône", "01"),
-    #     ("Digne-les-Bains", "04"),
-    #     ("Espinchal", "63"),
-    #     ("Marseille", "13"),
-    #     ("Montfalcon", "38"),
-    #     ("Paris", "75"),
-    # ]
-    #
-    # for city, dept in cities:
-    #     process_city_weather(city, dept)
+    load_communes()
+
+    cities = [
+        ("Asnières-sur-Saône", "01"),
+        ("Digne-les-Bains", "04"),
+        ("Espinchal", "63"),
+        ("Marseille", "13"),
+        ("Montfalcon", "38"),
+        ("Paris", "75"),
+    ]
+
+    for city, dept in cities:
+        process_city_weather(city, dept)
