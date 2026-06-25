@@ -50,15 +50,12 @@ def missing_rate_per_station(df: pd.DataFrame, seuil: float = config.MAX_MISSING
             rows.append(num_poste)
     return df[df["NUM_POSTE"].isin(rows)]
 
-_valid_station_ids_cache: dict[float, set] = {}
 
 def build_valid_station_ids(seuil: float = config.MAX_MISSING_PERCENT) -> set:
     """
     Lit tous les fichiers météo, filtre sur 2014-2023,
     et retourne l'ensemble des NUM_POSTE passant le critère de qualité.
     """
-    if seuil in _valid_station_ids_cache:
-        return _valid_station_ids_cache[seuil]
 
     pattern = os.path.join(config.METEO_RAW_DIR, "*RR-T-Vent*.csv.gz")
     meteo_files = sorted(glob.glob(pattern))
@@ -82,7 +79,6 @@ def build_valid_station_ids(seuil: float = config.MAX_MISSING_PERCENT) -> set:
             valid_ids.update(valid_df["NUM_POSTE"].unique())
         except Exception:
             continue
-    _valid_station_ids_cache[seuil] = valid_ids
     return valid_ids
 
 def clean_communes(df: pd.DataFrame, cache=True) -> None:
@@ -191,7 +187,7 @@ def process_city_weather(city_name: str, dept: str, output_dir: str = config.VAL
     df = pd.read_csv(
         meteo_files[0], sep=";", compression="gzip",
         usecols=["NUM_POSTE", "NOM_USUEL", "LAT", "LON", "ALTI", "AAAAMMJJ", "TN"],
-        dtype={"NUM_POSTE": str},
+        dtype={"NUM_POSTE": str, "ALTI": float},
     )
     df = df[df["NUM_POSTE"] == num_poste].copy()
     if df.empty:
