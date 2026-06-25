@@ -128,16 +128,15 @@ def get_all_station():
                 filepath,
                 sep=";",
                 compression="gzip",
-                usecols=["NUM_POSTE", "NOM_USUEL", "LAT", "LON"],
+                usecols=["NUM_POSTE", "NOM_USUEL"],
                 dtype={"NUM_POSTE": str},
             )
         except Exception:
             continue
 
         stations = (
-            df[["NUM_POSTE", "NOM_USUEL", "LAT", "LON"]]
+            df[["NUM_POSTE", "NOM_USUEL"]]
             .drop_duplicates("NUM_POSTE")
-            .dropna(subset=["LAT", "LON"])
         )
         records.append(stations)
     if not records:
