@@ -134,11 +134,31 @@ def get_all_station():
         except Exception:
             continue
 
-        stations = (
+        df_station = (
             df[["NUM_POSTE", "NOM_USUEL"]]
             .drop_duplicates("NUM_POSTE")
         )
-        records.append(stations)
+        start = pd.Timestamp(config.DEFAULT_START_YEAR, 1, 1)
+        end = pd.Timestamp(config.DEFAULT_END_YEAR, 12, 31)
+        df_station["date"] = pd.to_datetime(df_station["AAAAMMJJ"].astype(str), format="%Y%m%d", errors="coerce")
+        df_station = df_station.dropna(subset=["date"])
+        df_station = df_station[(df_station["date"] >= start) & (df_station["date"] <= end)].copy()
+        if df_station.empty:
+            return 100.0
+
+        nb_present = len(df_station)
+        nb_tn_nan = df_station["tn_celsius"].isna().sum()
+
+        date_min = df_station["date"].min()
+        date_max = df_station["date"].max()
+        nb_expected = (date_max - date_min).days + 1
+        nb_absent_rows = max(0, nb_expected - nb_present)
+        nb_missing_total = int(nb_tn_nan) + nb_absent_rows
+        miss_rate = 100.0 * nb_missing_total / nb_expected if nb_expected > 0 else 100.0
+        if miss_rate > config.MAX_MISSING_PERCENT:
+            continue
+
+        records.append(df_station)
     if not records:
         raise ValueError("Aucune station trouvée dans les fichiers météo.")
 

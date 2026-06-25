@@ -133,7 +133,7 @@ def _load_station_data(
 # Calcul du taux de valeurs manquantes d'une station sur une période
 # ---------------------------------------------------------------------------
 
-def _missing_rate(df_station: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> float:
+def _missing_rate(df_station: pd.DataFrame) -> float:
     """
     Taux de valeurs manquantes (%) en tenant compte :
       - des NaN dans tn_celsius
@@ -355,7 +355,7 @@ def compute_frost_days(
             idx += 1
             continue
 
-        miss_rate = _missing_rate(df_station, start, end)
+        miss_rate = _missing_rate(df_station)
         if miss_rate > max_missing_pct:
             if verbose:
                 print(
