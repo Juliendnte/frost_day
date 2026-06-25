@@ -38,6 +38,7 @@ import argparse
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
@@ -232,9 +233,16 @@ def filter_resources_for_depts(resources: list[dict], depts: list[str]) -> dict:
     return matches
 
 
-def download_meteo_for_depts(depts: list[str], force: bool = False) -> list[str]:
+def download_meteo_for_depts(
+    depts: list[str], force: bool = False, max_workers: int = 5
+) -> list[str]:
     """
     Télécharge les fichiers météo RR-T-Vent pour la liste de départements donnée.
+
+    Les téléchargements (limités par le réseau, pas par le CPU) sont effectués en
+    parallèle via un pool de threads (`max_workers` téléchargements simultanés).
+    On limite volontairement le nombre de threads pour rester poli avec le serveur
+    de data.gouv.fr et éviter de saturer la bande passante.
 
     Un échec de téléchargement sur un fichier (après épuisement des tentatives de
     reprise) n'interrompt pas le reste : il est consigné et le script continue avec
@@ -245,8 +253,9 @@ def download_meteo_for_depts(depts: list[str], force: bool = False) -> list[str]
     resources = list_meteo_resources()
     matches = filter_resources_for_depts(resources, depts)
 
-    downloaded_paths = []
-    failed = []
+    # On construit d'abord la liste des téléchargements à faire (un par fichier),
+    # en notant au passage les départements sans aucune ressource.
+    tasks = []  # (dep, filename, url, dest_path)
     not_found = []
     for dep in depts:
         urls = matches.get(dep, [])
@@ -256,10 +265,24 @@ def download_meteo_for_depts(depts: list[str], force: bool = False) -> list[str]
         for url in urls:
             filename = url.rsplit("/", 1)[-1]
             dest_path = os.path.join(config.METEO_RAW_DIR, filename)
-            print(f"Téléchargement département {dep} : {filename}")
+            tasks.append((dep, filename, url, dest_path))
+
+    downloaded_paths = []
+    failed = []
+
+    # Chaque thread télécharge un fichier. `_download_file` est déjà autonome
+    # (cache, reprise via Range HTTP, tentatives multiples), donc thread-safe :
+    # chaque appel écrit dans son propre fichier ".part" / fichier de destination.
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_task = {
+            executor.submit(_download_file, url, dest_path, force=force): (dep, filename, url)
+            for dep, filename, url, dest_path in tasks
+        }
+        for future in as_completed(future_to_task):
+            dep, filename, url = future_to_task[future]
             try:
-                _download_file(url, dest_path, force=force)
-                downloaded_paths.append(dest_path)
+                downloaded_paths.append(future.result())
+                print(f"  [OK] département {dep} : {filename}")
             except RuntimeError as exc:
                 print(f"  [ÉCHEC] {filename} : {exc}")
                 failed.append((dep, filename, url))
@@ -394,7 +417,9 @@ def main():
 
     depts = parse_depts_arg(args.depts)
     print(f"Départements demandés : {depts}\n")
+    start_time = time.time()
     paths = download_meteo_for_depts(depts, force=args.force)
+    print(f"[etl] Temps de téléchargement (multithread) : {time.time() - start_time:.2f}s")
 
     print("\n" + "=" * 70)
     print(f"[OK] {len(paths)} fichier(s) météo téléchargé(s) dans {config.METEO_RAW_DIR}")
