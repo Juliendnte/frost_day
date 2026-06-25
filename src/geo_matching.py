@@ -111,6 +111,48 @@ def _extract_dept_from_path(path: str) -> str:
     m = re.match(r"Q_([^_]+)_", basename)
     return m.group(1) if m else "XX"
 
+def get_all_station():
+    pattern = os.path.join(config.METEO_RAW_DIR, "*RR-T-Vent*.csv.gz")
+    meteo_files = sorted(glob.glob(pattern))
+
+    if not meteo_files:
+        raise FileNotFoundError(
+            f"Aucun fichier météo trouvé dans {config.METEO_RAW_DIR}. "
+            "Lancez d'abord src/download_data.py."
+        )
+
+    records = []
+    for filepath in meteo_files:
+        try:
+            df = pd.read_csv(
+                filepath,
+                sep=";",
+                compression="gzip",
+                usecols=["NUM_POSTE", "NOM_USUEL", "LAT", "LON"],
+                dtype={"NUM_POSTE": str},
+            )
+        except Exception:
+            continue
+
+        stations = (
+            df[["NUM_POSTE", "NOM_USUEL", "LAT", "LON"]]
+            .drop_duplicates("NUM_POSTE")
+            .dropna(subset=["LAT", "LON"])
+        )
+        records.append(stations)
+    if not records:
+        raise ValueError("Aucune station trouvée dans les fichiers météo.")
+
+    all_stations = pd.concat(records, ignore_index=True)
+    # En cas de doublon (même station présente dans plusieurs fichiers), on
+    # garde la ligne avec le tn_scale le plus fréquent pour ce NUM_POSTE.
+    all_stations = (
+        all_stations
+        .sort_values("NUM_POSTE")
+        .drop_duplicates("NUM_POSTE")
+        .reset_index(drop=True)
+    )
+    return all_stations
 
 def build_stations_cache(force: bool = False) -> pd.DataFrame:
     """
